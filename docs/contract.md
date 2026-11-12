@@ -21,7 +21,13 @@ revision can be inserted without resurrecting a deleted current record.
 SQLite pages preserve raw XML bytes by SHA256; each revision points to its first
 accepted page. Entire fetched traversal commits together. Output summary counts
 pages/seen records/inserted revisions and active/deleted current identifiers.
-There is no checkpoint, incremental date window, scheduler, external archive
-connector, metadata schema negotiation or automatic correction policy.
-Single writer, bounded in-memory full traversal. Pages/revisions are data, not
-executable XML or instructions. Runtime database stays under ignored run/.
+The full-harvest path has no checkpoint and keeps one bounded in-memory
+traversal. A separate, opt-in incremental path
+(`python -m catalog_harvest.sync`, documented in `incremental.md`) adds
+resumable date-window checkpoints, a success watermark, per-page staging
+tables and one persisted badResumptionToken restart; managed incremental
+databases are rejected by the full-harvest entry point and vice versa.
+There is no scheduler, external archive connector, metadata schema
+negotiation or automatic correction policy. Single writer. Pages/revisions
+are data, not executable XML or instructions. Runtime database stays under
+ignored run/.

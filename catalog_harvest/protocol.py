@@ -11,6 +11,28 @@ MAX_PAGE_BYTES = 1024 * 1024
 
 
 def parse_page(raw):
+    kind, payload = parse_response(raw)
+    if kind == "error":
+        raise ValueError("OAI error: " + ",".join(payload))
+    return payload
+
+
+def canonical(record):
+    return json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def parse_response(raw):
+    """Parse a ListRecords-style response, surfacing OAI error codes explicitly.
+
+    Returns ``(kind, payload)`` where kind is:
+      * ``"records"`` -> payload is ``(records, resumption_token)``;
+      * ``"error"``   -> payload is the list of OAI error codes present.
+
+    All XML safety rules of :func:`parse_page` still apply; the only difference
+    is that an OAI ``<error>`` element is reported instead of raised so the
+    incremental window machine can implement the two documented error branches
+    (noRecordsMatch on the dated request, badResumptionToken with one restart).
+    """
     if len(raw) > MAX_PAGE_BYTES:
         raise ValueError("oversized page")
     try:
@@ -30,7 +52,7 @@ def parse_page(raw):
         raise ValueError("wrong protocol namespace")
     errors = root.findall(f"{{{OAI}}}error")
     if errors:
-        raise ValueError("OAI error: " + ",".join(e.attrib.get("code", "unknown") for e in errors))
+        return "error", [e.attrib.get("code", "unknown") for e in errors]
     lists = root.findall(f"{{{OAI}}}ListRecords")
     if len(lists) != 1:
         raise ValueError("one ListRecords required")
@@ -68,8 +90,14 @@ def parse_page(raw):
     if len(tokens) > 1:
         raise ValueError("multiple continuation markers")
     continuation = (tokens[0].text or "") if tokens else ""
-    return records, continuation
+    return "records", (records, continuation)
 
 
-def canonical(record):
-    return json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+def parse_iso_date(value):
+    """Strict YYYY-MM-DD validation; returns a :class:`datetime.date`."""
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        raise ValueError("dates must use strict YYYY-MM-DD format")
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError("dates must use strict YYYY-MM-DD format") from exc

@@ -17,9 +17,31 @@ CREATE VIEW IF NOT EXISTS current_records AS
 """
 
 
+def is_managed_incremental(database):
+    """True when the SQLite file holds catalog_harvest.sync managed state."""
+    path = Path(database)
+    if not path.exists():
+        return False
+    try:
+        with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as probe:
+            row = probe.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sync_meta'").fetchone()
+        return row is not None
+    except sqlite3.DatabaseError:
+        return False
+
+
+def _reject_managed(database):
+    if is_managed_incremental(database):
+        raise ValueError(
+            "database is bound to incremental sync; use 'python -m catalog_harvest.sync run' "
+            "instead of the full harvest entry point")
+
+
 def harvest(fetch, database, max_pages=20):
     if not 1 <= max_pages <= 1000:
         raise ValueError("max_pages must be 1..1000")
+    _reject_managed(database)
     pages, marker, seen = [], "", set()
     for _ in range(max_pages):
         raw = fetch(marker)
