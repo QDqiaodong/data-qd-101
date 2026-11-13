@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "nodes": [
+    {"topic_id": "leaf", "label": "Leaf water topics"},
+    {"topic_id": "left", "label": "Left branch"},
+    {"topic_id": "right", "label": "Right branch"},
+    {"topic_id": "root", "label": "Catalog root"},
+    {"topic_id": "unused", "label": "Unused demonstration node"}
+  ],
+  "edges": [
+    {"child": "leaf", "parent": "left"},
+    {"child": "leaf", "parent": "right"},
+    {"child": "left", "parent": "root"},
+    {"child": "right", "parent": "root"}
+  ],
+  "bindings": [
+    {"subject": "hydro", "topic_id": "leaf"},
+    {"subject": "water", "topic_id": "leaf"}
+  ]
+}

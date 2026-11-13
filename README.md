@@ -6,6 +6,8 @@
 
 新增：可跨进程恢复的日期窗口增量采集（`python -m catalog_harvest.sync`），逐页 SQLite 检查点、成功水位 W、窗口冻结参数、opaque resumptionToken 续传、`badResumptionToken` 一次性持久化重启、失败放弃（discard）与只读 status。全量入口与增量入口互斥，业务键、规范化、同键冲突拒绝、首次页面归属和 tombstone 规则在两条路径上保持一致。
 
+再新增：离线历史主题数仓（`python -m catalog_harvest.warehouse`）。它只通过只读事务读取正式 `pages`/`revisions`（绝不读取 `sync_stage_*`、未完成窗口或水位，也不修改源库），结合固定静态分类 JSON，构建可脱离源库与分类文件单独使用的自包含分析 SQLite：半开版本时间线、传递闭包（最短距离、去重）、多值主题/直接主题/祖先桥、按边界扫描生成的稀疏半开数量区间（含零区间与未使用节点）以及稳定的逻辑来源摘要。配套 `as-of` 子命令回答任意历史日期的有效题名、主题与去重分类计数。完整表粒度、时间口径、去重汇总、来源与失败重建说明见 `docs/warehouse.md`。
+
 ## 独立安装
 
 需要 Python >=3.11（先确认 python3 --version）。运行依赖全部为标准库。 构建工具也已固定版本。
@@ -75,13 +77,35 @@ python -m catalog_harvest.sync_demo --db run/inc.sqlite
 
 重叠只能覆盖有限的迟到修订范围；OAI-PMH 分页不保证服务端在多次请求间保持同一时刻快照，因此跨窗口/跨进程看到的集合可能随源端变化。本项目只针对合成 loopback 源与文档化的日期粒度子集，不连接真实档案服务，不做自动 HTTP 重试（除上述一次性 badResumptionToken 重启外）、无调度器。完整内部表布局与状态转换见 `docs/incremental.md`。
 
+## 离线历史主题数仓（无 HTTP、无服务）
+
+数仓是单写者离线全量重建，输入是现有全量库或受管增量库，再加一个固定静态分类 JSON（原创合成示例：`data/taxonomy_demo.json`）。它不访问 HTTP、不启动服务，仅使用标准库和 SQLite，产物可脱离两个输入单独查询。
+
+```sh
+python -m catalog_harvest.warehouse build \
+  --source-db run/catalog.sqlite --taxonomy data/taxonomy_demo.json \
+  --start 2026-01-01 --end 2026-01-07 --database run/warehouse.sqlite
+python -m catalog_harvest.warehouse as-of --database run/warehouse.sqlite --date 2026-01-03
+# 一键原创合成示例（自建临时源、构建并逐日 as-of，全部在本地完成）
+python -m catalog_harvest.warehouse_demo --workdir run/wh-demo
+```
+
+- 只读事务只取正式事实；同步暂存（可含无效 XML 与独有标识）、未完成窗口和成功水位不会被读取或导出，源库字节保持不变，源不存在不会创建空库。
+- 每条正式修订重新校验严格日期、deleted/title/subjects/canonical 一致性、页面引用、原文字节 SHA256，并用现有解析器验证同键同规范载荷；损坏事实整次失败并定位到业务键或页面摘要。
+- 版本为半开区间 `[valid_from, valid_to)`：修订自其日期生效至下一修订；`start` 前最近修订决定起始状态；首修订之前为未知（不回填、不伪造删除）；删除占据自身区间，之后活动版本可重新出现；相邻但身份不同的版本即使载荷相同也不合并。
+- 分类严格校验（schema_version 仅整数 1、精确字段、唯一节点/绑定、拒绝自边/重边/任意分量环）。物化含自身的最短距离闭包；多 subject、同义绑定与菱形路径在每个版本/祖先上只投一票；未绑定 subject 保留在独立明细，绝不冒充真实 topic_id。
+- 数量按修订/区间边界扫描成稀疏最大半开区间（含零区间和未使用节点），不按天展开长日期范围；另存全目录活动、删除、无主题活动、含未映射主题活动四项可重叠指标。所有数量为整数，`record_days` 可由区间表 SQL 重算。
+- 目标同目录临时库写入后通过 `integrity_check`/`foreign_key_check`/区间覆盖检查，关闭后原子替换；任何失败非零退出、清理本次临时文件且旧目标完整，修正后可直接重跑。输出不得与源库或分类文件为同一文件（含符号/硬链接别名）。
+
 ## 结构与业务契约
 
 - `catalog_harvest/protocol.py：XML 命名空间、字段及修订规范`
 - `catalog_harvest/transport.py：有界 loopback HTTP 请求`
 - `catalog_harvest/harvest.py：分页遍历、事务和版本视图`
-- `catalog_harvest/demo.py：临时模拟来源，全流程后关闭`
-- `docs/contract.md`：完整字段/格式、业务键、边界、输出含义与当前约束。
+- `catalog_harvest/sync.py：可恢复日期窗口增量采集`
+- `catalog_harvest/warehouse.py：只读正式事实、静态分类、闭包/桥表与稀疏区间数仓`
+- `catalog_harvest/demo.py`、`catalog_harvest/sync_demo.py`、`catalog_harvest/warehouse_demo.py：本地确定性演示`
+- `docs/contract.md`、`docs/incremental.md`、`docs/warehouse.md`：采集契约、增量内部布局与数仓粒度/语义。
 - `data/`：小型确定性合成输入和 `PROVENANCE.md`。
 - `tests/`：真实业务值、重复运行、重要边界和失败行为测试。
 
