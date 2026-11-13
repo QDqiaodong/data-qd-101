@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "topics": ["leaf", "left", "right", "root", "unused"],
+  "alpha": "0.3",
+  "min_shared": 1
+}
