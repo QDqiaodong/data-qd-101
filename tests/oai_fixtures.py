@@ -118,3 +118,23 @@ def run_cli(*args, env=None, expect_code=0):
 def cli_json(*args, env=None):
     proc = run_cli(*args, env=env)
     return json.loads(proc.stdout)
+
+
+def run_batch_cli(*args, env=None, expect_code=0):
+    """Run the batch CLI in a fresh process; return CompletedProcess."""
+    proc = subprocess.run(
+        [sys.executable, "-E", "-m", "catalog_harvest.batch", *map(str, args)],
+        cwd=ROOT,
+        capture_output=True, text=True, env=_isolated_env(env))
+    if expect_code == 75:
+        # The process died in a barrier; its stdout still carries the event.
+        pass
+    if proc.returncode != expect_code:
+        raise AssertionError(
+            f"batch CLI exited {proc.returncode}, expected {expect_code}\n"
+            f"stdout={proc.stdout}\nstderr={proc.stderr}")
+    return proc
+
+
+def batch_cli_json(*args, env=None):
+    return json.loads(run_batch_cli(*args, env=env).stdout)

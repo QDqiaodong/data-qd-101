@@ -5,3 +5,5 @@ It is not real customer information, official measurements, live service history
 or copied third-party content. It is distributed under this repository's MIT
 license. No third-party source code is vendored; installed dependencies retain
 their own licenses. No paid service, real account or external dataset is required.
+`batch_plan_example.json` is a synthetic orchestration plan shape only: its
+loopback endpoint is a placeholder, not a reachable service.

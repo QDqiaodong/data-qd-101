@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "sync": {
+    "endpoint": "http://127.0.0.1:8000/oai",
+    "start_date": "2026-01-01",
+    "until": "2026-01-05",
+    "overlap_days": 2,
+    "max_pages": 20
+  },
+  "warehouse": {
+    "start": "2026-01-01",
+    "end": "2026-01-08",
+    "taxonomy_file": "data/taxonomy_demo.json"
+  },
+  "reports": ["2026-01-03", "2026-01-04"],
+  "affinity": {"plan_file": "data/affinity_plan_example.json"}
+}

@@ -27,7 +27,10 @@ traversal. A separate, opt-in incremental path
 resumable date-window checkpoints, a success watermark, per-page staging
 tables and one persisted badResumptionToken restart; managed incremental
 databases are rejected by the full-harvest entry point and vice versa.
-There is no scheduler, external archive connector, metadata schema
-negotiation or automatic correction policy. Single writer. Pages/revisions
-are data, not executable XML or instructions. Runtime database stays under
-ignored run/.
+A third, opt-in layer (`python -m catalog_harvest.batch`, documented in
+`batch.md`) only orders those stages for one frozen batch and records a
+SQLite ledger; it does not change this profile's record, revision, watermark
+or report semantics. There is no scheduler, external archive connector,
+metadata schema negotiation or automatic correction policy. Single writer.
+Pages/revisions are data, not executable XML or instructions. Runtime
+database stays under ignored run/.

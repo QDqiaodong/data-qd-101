@@ -10,6 +10,8 @@
 
 再新增：独立的跨主题共现线索分析（`python -m catalog_harvest.affinity`）。它以已交付的历史主题数仓为唯一输入，不重新采集、建仓或改动分类，只在一个显式只读事务里读取当天版本与既有去重祖先桥，产出单个确定性 JSON 报告：一条活动 identifier 一票（含无主题、仅未映射与零命中记录；删除版本只入依据不入分母），先按闭包排除父子对再固定检验家族，固定边际单侧 Fisher 精确尾概率全程用任意精度整数与 `Fraction` 计算，整家族做 Benjamini–Hochberg 反向累计最小值调整，线索须同时满足 `a>=min_shared`、`lift>1` 与 `q<=alpha`，并附可独立重算 a/b/c/d 与 N 的逐记录依据和逻辑 SHA256。计划与报告契约、口径与解释边界见 `docs/affinity.md`。
 
+再新增：持久化批次编排（`python -m catalog_harvest.batch`）。它只把既有三段（同步 → 建仓 → 多日期报告）按固定顺序串起来，不改任何业务口径：每批以唯一 `run_id` 和私有目录冻结严格 JSON 计划、分类与分析计划的原字节及其 SHA256，先同步、再建仓、最后逐日期生成报告，全部成功才发布完整交付清单。SQLite 台账逐阶段保存意图、尝试、错误与产物依据；失败阻断下游，重跑跳过已核成功阶段。同步已提交、数仓已替换或报告已发布而台账尚未记成功时，按本批身份（endpoint/起点 B/水位 W、窗口冻结参数、数仓来源与分类摘要、报告日期与计划字节摘要）和内容重核算后接回，不重复开同步窗口、不凭文件存在认成功；损坏或外来产物报错保全并阻断。同批进程争用以非阻塞独占锁即时拒绝；`status` 只读、不取锁、不联网。部分报告失败只重试该任务，成功报告不重跑，失败批次不生成清单。计划契约、恢复与竞争语义见 `docs/batch.md`。
+
 ## 独立安装
 
 需要 Python >=3.11（先确认 python3 --version）。运行依赖全部为标准库。 构建工具也已固定版本。
@@ -118,6 +120,32 @@ python -m catalog_harvest.affinity \
 - p 是固定边际模型下的诊断值，q 是指定家族的 BH 调整；不宣称在任意相关结构下保证真实 FDR，不把非随机、不完整的收录数据解释成人群普遍规律或因果关系，线索也不是自动分类或已证实的跨学科关联。
 
 
+## 持久化批次编排（同步 → 建仓 → 报告）
+
+`batch` 是唯一把三段串起来的入口；三段仍各自调用既有库函数，业务规则完全不变。
+
+```sh
+# 首跑：冻结计划并顺序执行同步、建仓、每个日期一份报告，最后发布清单
+python -m catalog_harvest.batch run \
+    --plan run/batch-plan.json --workdir run/batches --run-id 2026-01-05
+# 重跑同一批：已核成功阶段跳过，失败阶段重试，提交间隙中的产物按内容接回；
+# 计划或输入字节变化会在联网前被拒，需换新 run-id
+python -m catalog_harvest.batch run \
+    --plan run/batch-plan.json --workdir run/batches --run-id 2026-01-05
+# 只读状态：不取锁、不写、不联网
+python -m catalog_harvest.batch status --workdir run/batches --run-id 2026-01-05
+# 一键本地合成演示（自建 loopback 源，真实 HTTP 贯通三阶段）
+python -m catalog_harvest.batch_demo --workdir run/batch-demo
+```
+
+计划顶层恰为 `schema_version`（整数 1）、`sync`（`endpoint`/`start_date`/`until`/`overlap_days`/`max_pages`）、`warehouse`（`start`/`end`/`taxonomy_file`）、`reports`（1..N 个 `YYYY-MM-DD`，须落在半开区间内）与 `affinity`（`plan_file`）；重复 JSON 键拒绝，run-id 必须匹配 `[A-Za-z0-9][A-Za-z0-9._-]{0,63}` 且不能是路径。创建时把计划、分类与分析计划的原字节复制到 `inputs/` 并记录 SHA256；后续 run 必须提交同一计划字节，同批身份或输入变化在联网前拒绝。
+
+- 阶段固定为 `sync` → `warehouse` → `report:<date>`（按计划顺序）→ `manifest`。SQLite 台账逐阶段保存计划意图、状态、尝试记录、最后错误、产物依据与恢复事件。
+- 产物依据一律从产物本身重算：同步要求唯一窗口 `complete/done` 且 endpoint/B/W 与冻结参数一致、正式事实可重解析并得到 `source_facts_sha256`；数仓要求格式、区间、`source_facts_sha256`、`taxonomy_sha256` 全部匹配且完整性检查通过；报告要求日期、数仓摘要、计划字节摘要与报告自身三个逻辑摘要全部自洽。仅文件存在绝不视为成功。
+- 失败当次即阻断全部下游并以非零退出；清单只有每阶段都成功才发布，部分批次没有清单。再次显式 `run` 只重新排队失败/被阻断阶段，已核成功阶段保持原字节不动；因此部分报告失败只重试该任务，成功报告不重跑。
+- 同步已发布而台账未记成功时按本批身份与内容接回，不重开窗口、不再发 HTTP；数仓已替换、报告已发布同理不重做。外来或损坏产物明确报错并原样保留。
+- 单写者：`run` 对 `state.lock` 取非阻塞独占锁，竞争进程立即被拒（退出码 2），不等待、不发请求；`status` 只读且不取锁、不联网。
+
 ## 结构与业务契约
 
 - `catalog_harvest/protocol.py：XML 命名空间、字段及修订规范`
@@ -126,11 +154,12 @@ python -m catalog_harvest.affinity \
 - `catalog_harvest/sync.py：可恢复日期窗口增量采集`
 - `catalog_harvest/warehouse.py：只读正式事实、静态分类、闭包/桥表与稀疏区间数仓`
 - `catalog_harvest/affinity.py：只读数仓快照、精确 Fisher/BH 共现分析与原子 JSON 报告`
-- `catalog_harvest/demo.py`、`catalog_harvest/sync_demo.py`、`catalog_harvest/warehouse_demo.py：本地确定性演示`
-- `docs/contract.md`、`docs/incremental.md`、`docs/warehouse.md`、`docs/affinity.md`：采集契约、增量内部布局、数仓粒度/语义与共现分析计划/统计/报告契约`
+- `catalog_harvest/batch.py：run/status 持久化批次编排（冻结输入、SQLite 台账、接回与竞争拒绝）`
+- `catalog_harvest/demo.py`、`catalog_harvest/sync_demo.py`、`catalog_harvest/warehouse_demo.py`、`catalog_harvest/batch_demo.py：本地确定性演示`
+- `docs/contract.md`、`docs/incremental.md`、`docs/warehouse.md`、`docs/affinity.md`、`docs/batch.md`：采集契约、增量内部布局、数仓粒度/语义、共现分析契约与批次编排/恢复契约`
 - `data/`：小型确定性合成输入、共现计划示例和 `PROVENANCE.md`。
 - `tests/`：真实业务值、重复运行、重要边界、独立数值参照和失败行为测试。
 
-当前范围：当前只有合成来源和 OAI-PMH 日期粒度子集，不声称兼容任意真实档案接口。全量路径没有定时调度；增量路径提供单写者、跨进程可恢复的日期窗口与断点（见 `docs/incremental.md`），但同样没有调度器或并发采集。
+当前范围：当前只有合成来源和 OAI-PMH 日期粒度子集，不声称兼容任意真实档案接口。全量路径没有定时调度；增量路径提供单写者、跨进程可恢复的日期窗口与断点（见 `docs/incremental.md`）；批次编排提供单写者、可接续的三阶段编排（见 `docs/batch.md`）。三者都没有调度器、后台守护或并发采集。
 
 全部示例为原创合成数据，不代表真实客户、监管标准、实际测量或线上历史。项目没有真实账号、密钥或付费依赖；不包含第三方原始数据。代码及自制数据采用 MIT；依赖保留自身许可。
